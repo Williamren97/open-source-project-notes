@@ -18,6 +18,7 @@ namespace caffe {
   * mechanism is used to allow the snapshot to be saved when stopping
   * execution with a SIGINT (Ctrl-C).
   */
+  // 可由客户端发送的请求类型的枚举。
   namespace SolverAction {
     enum Enum {
       NONE = 0,  // Take no special action.
@@ -30,6 +31,7 @@ namespace caffe {
 /**
  * @brief Type of a function that returns a Solver Action enumeration.
  */
+// 回调函数，用于返回请求类型。
 typedef boost::function<SolverAction::Enum()> ActionCallback;
 
 /**

@@ -10,12 +10,14 @@
 #include "caffe/util/upgrade_proto.hpp"
 
 namespace caffe {
-
+  
+// 通过回调函数来设置请求，由其他地方(客户端)去调用，接入函数到solver里。
 template<typename Dtype>
 void Solver<Dtype>::SetActionFunction(ActionCallback func) {
   action_request_function_ = func;
 }
 
+// 检查与获取请求。
 template<typename Dtype>
 SolverAction::Enum Solver<Dtype>::GetRequestedAction() {
   if (action_request_function_) {
@@ -35,10 +37,12 @@ template <typename Dtype>
 Solver<Dtype>::Solver(const string& param_file)
     : net_(), callbacks_(), requested_early_exit_(false) {
   SolverParameter param;
+  // 从文件中解释参数。
   ReadSolverParamsFromTextFileOrDie(param_file, &param);
   Init(param);
 }
 
+// 初始化Solver，SolverParameter是通过外面的solver文件解释出来的参数。
 template <typename Dtype>
 void Solver<Dtype>::Init(const SolverParameter& param) {
   LOG_IF(INFO, Caffe::root_solver()) << "Initializing solver from parameters: "
@@ -50,7 +54,9 @@ void Solver<Dtype>::Init(const SolverParameter& param) {
     Caffe::set_random_seed(param_.random_seed() + Caffe::solver_rank());
   }
   // Scaffolding code
+  // 初始化训练网络，对应成员net_,只能有一个。
   InitTrainNet();
+  // 初始化训练网络，对应成员test_nets_，可以有多个。
   InitTestNets();
   if (Caffe::root_solver()) {
     LOG(INFO) << "Solver scaffolding done.";
@@ -176,6 +182,7 @@ void Solver<Dtype>::InitTestNets() {
   }
 }
 
+// 训练迭代过程。
 template <typename Dtype>
 void Solver<Dtype>::Step(int iters) {
   const int start_iter = iter_;
@@ -185,12 +192,15 @@ void Solver<Dtype>::Step(int iters) {
   smoothed_loss_ = 0;
   iteration_timer_.Start();
 
+  // 循环迭代到最大迭代次数。
   while (iter_ < stop_iter) {
-    // zero-init the params
+    // zero-init the params，置空用于保存梯度信息的容器。
     net_->ClearParamDiffs();
+    // 判断该次迭代是否需要测试。
     if (param_.test_interval() && iter_ % param_.test_interval() == 0
         && (iter_ > 0 || param_.test_initialization())) {
       if (Caffe::root_solver()) {
+        // 只对根solver进行测试，其他的子solver不做测试。
         TestAll();
       }
       if (requested_early_exit_) {
@@ -199,6 +209,7 @@ void Solver<Dtype>::Step(int iters) {
       }
     }
 
+    // 一些特定操作，由其他地方去实现，插入功能函数到这里。
     for (int i = 0; i < callbacks_.size(); ++i) {
       callbacks_[i]->on_start();
     }
@@ -207,11 +218,13 @@ void Solver<Dtype>::Step(int iters) {
     // accumulate the loss and gradient
     Dtype loss = 0;
     for (int i = 0; i < param_.iter_size(); ++i) {
+      // 前向反向计算，其中前向计算会得到loss，反向计算得到梯度。
       loss += net_->ForwardBackward();
     }
     loss /= param_.iter_size();
     // average the loss across iterations for smoothed reporting
     UpdateSmoothedLoss(loss, start_iter, average_loss);
+    // 打印信息。
     if (display) {
       float lapse = iteration_timer_.Seconds();
       float per_s = (iter_ - iterations_last_) / (lapse ? lapse : 1);
@@ -240,15 +253,18 @@ void Solver<Dtype>::Step(int iters) {
         }
       }
     }
+    // 一些特定操作，由其他地方实现。如多GPU训练中，会由NCCL去实现。详情看parallel.cpp。
     for (int i = 0; i < callbacks_.size(); ++i) {
       callbacks_[i]->on_gradients_ready();
     }
+    // 参数更新，在Solver类中为虚的空函数，需要由其派生的特定的优化算法去实现。
     ApplyUpdate();
 
     // Increment the internal iter_ counter -- its value should always indicate
     // the number of times the weights have been updated.
     ++iter_;
 
+    // 获取请求。
     SolverAction::Enum request = GetRequestedAction();
 
     // Save a snapshot if needed.
@@ -266,6 +282,7 @@ void Solver<Dtype>::Step(int iters) {
   }
 }
 
+// Solver的主要入口，由该函数去调用step进行训练。
 template <typename Dtype>
 void Solver<Dtype>::Solve(const char* resume_file) {
   CHECK(Caffe::root_solver());
@@ -282,6 +299,7 @@ void Solver<Dtype>::Solve(const char* resume_file) {
 
   // For a network that is trained by the solver, no bottom or top vecs
   // should be given, and we will just provide dummy vecs.
+  // 主要的训练部分代码
   int start_iter = iter_;
   Step(param_.max_iter() - iter_);
   // If we haven't already, save a snapshot after optimization, unless
@@ -315,6 +333,7 @@ void Solver<Dtype>::Solve(const char* resume_file) {
   LOG(INFO) << "Optimization Done.";
 }
 
+// 测试所有的测试网络。
 template <typename Dtype>
 void Solver<Dtype>::TestAll() {
   for (int test_net_id = 0;
@@ -324,6 +343,7 @@ void Solver<Dtype>::TestAll() {
   }
 }
 
+// 网络测试
 template <typename Dtype>
 void Solver<Dtype>::Test(const int test_net_id) {
   CHECK(Caffe::root_solver());
@@ -335,7 +355,9 @@ void Solver<Dtype>::Test(const int test_net_id) {
   vector<int> test_score_output_id;
   const shared_ptr<Net<Dtype> >& test_net = test_nets_[test_net_id];
   Dtype loss = 0;
+  // param_.test_iter(test_net_id)为测试的迭代次数，由solver文件中的超参数中设置。
   for (int i = 0; i < param_.test_iter(test_net_id); ++i) {
+    // 获取请求，看是否有额外的操作请求。
     SolverAction::Enum request = GetRequestedAction();
     // Check to see if stoppage of testing/training has been requested.
     while (request != SolverAction::NONE) {
@@ -351,6 +373,7 @@ void Solver<Dtype>::Test(const int test_net_id) {
       break;
     }
 
+    // 前向计算，并获取结果。
     Dtype iter_loss;
     const vector<Blob<Dtype>*>& result =
         test_net->Forward(&iter_loss);
@@ -359,6 +382,7 @@ void Solver<Dtype>::Test(const int test_net_id) {
     }
     if (i == 0) {
       for (int j = 0; j < result.size(); ++j) {
+        // 取出结果数据
         const Dtype* result_vec = result[j]->cpu_data();
         for (int k = 0; k < result[j]->count(); ++k) {
           test_score.push_back(result_vec[k]);
@@ -399,6 +423,7 @@ void Solver<Dtype>::Test(const int test_net_id) {
   }
 }
 
+// 保存模型快照文件。
 template <typename Dtype>
 void Solver<Dtype>::Snapshot() {
   CHECK(Caffe::root_solver());
@@ -417,6 +442,8 @@ void Solver<Dtype>::Snapshot() {
   SnapshotSolverState(model_filename);
 }
 
+// 检查是否可以写Snapshot文件。
+// 主要是检查读写权限和文件路径。
 template <typename Dtype>
 void Solver<Dtype>::CheckSnapshotWritePermissions() {
   if (Caffe::root_solver() && param_.snapshot()) {
@@ -441,6 +468,7 @@ string Solver<Dtype>::SnapshotFilename(const string extension) {
     + extension;
 }
 
+// 普通的模型保存
 template <typename Dtype>
 string Solver<Dtype>::SnapshotToBinaryProto() {
   string model_filename = SnapshotFilename(".caffemodel");
@@ -451,6 +479,7 @@ string Solver<Dtype>::SnapshotToBinaryProto() {
   return model_filename;
 }
 
+// 模型保存成hdf5的格式
 template <typename Dtype>
 string Solver<Dtype>::SnapshotToHDF5() {
   string model_filename = SnapshotFilename(".caffemodel.h5");
@@ -459,6 +488,7 @@ string Solver<Dtype>::SnapshotToHDF5() {
   return model_filename;
 }
 
+// 加载快照模型文件
 template <typename Dtype>
 void Solver<Dtype>::Restore(const char* state_file) {
   string state_filename(state_file);

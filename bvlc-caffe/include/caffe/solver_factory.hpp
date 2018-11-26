@@ -56,11 +56,14 @@ class SolverRegistry {
   typedef Solver<Dtype>* (*Creator)(const SolverParameter&);
   typedef std::map<string, Creator> CreatorRegistry;
 
+  // 工厂模式的注册表
   static CreatorRegistry& Registry() {
+	// 静态变量，全局有效。
     static CreatorRegistry* g_registry_ = new CreatorRegistry();
     return *g_registry_;
   }
 
+  // 添加创建器，将各solver的构造函数加入到内，与一个字串绑定，后续可通过字串来找到对应的构造函数定义对象。
   // Adds a creator.
   static void AddCreator(const string& type, Creator creator) {
     CreatorRegistry& registry = Registry();
@@ -69,6 +72,7 @@ class SolverRegistry {
     registry[type] = creator;
   }
 
+  // 通过工厂的注册列表，由字串找到对应的构造函数进行对象创建。
   // Get a solver using a SolverParameter.
   static Solver<Dtype>* CreateSolver(const SolverParameter& param) {
     const string& type = param.type();
@@ -78,6 +82,7 @@ class SolverRegistry {
     return registry[type](param);
   }
 
+  // 返回所有已经注册了的solver的对应字串。
   static vector<string> SolverTypeList() {
     CreatorRegistry& registry = Registry();
     vector<string> solver_types;
@@ -91,6 +96,8 @@ class SolverRegistry {
  private:
   // Solver registry should never be instantiated - everything is done with its
   // static variables.
+  // 私有的构造函数，不能被外面调用进行实例化。
+  // 全局只会存在一个静态的实例，在调用Registry()时被实例化一次，并全局共享。
   SolverRegistry() {}
 
   static string SolverTypeListString() {
@@ -107,7 +114,7 @@ class SolverRegistry {
   }
 };
 
-
+// 通过一个模板类的构造来调用SolverRegistry进行注册
 template <typename Dtype>
 class SolverRegisterer {
  public:
@@ -118,11 +125,12 @@ class SolverRegisterer {
   }
 };
 
-
+// 用于solver的构建器的工厂
 #define REGISTER_SOLVER_CREATOR(type, creator)                                 \
   static SolverRegisterer<float> g_creator_f_##type(#type, creator<float>);    \
   static SolverRegisterer<double> g_creator_d_##type(#type, creator<double>)   \
 
+// 映射到对应solver的构建函数，并输入到solver构建器的工厂中进行注册
 #define REGISTER_SOLVER_CLASS(type)                                            \
   template <typename Dtype>                                                    \
   Solver<Dtype>* Creator_##type##Solver(                                       \

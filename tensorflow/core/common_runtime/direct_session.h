@@ -52,6 +52,8 @@ class DebugGateway;
 class Device;
 class DirectSessionFactory;
 
+// 继承于Session，为单机执行而设计，是用户调用TF跑计算图的最外层类封装。
+// 类中包含了资源分配、释放和计算图的构建与运行等基本功能函数。
 class DirectSession : public Session {
  public:
   typedef std::function<void(Session*)> CloseCallback;
@@ -67,14 +69,18 @@ class DirectSession : public Session {
   typedef std::vector<std::pair<string, Tensor>> NamedTensorList;
   typedef std::unordered_map<StringPiece, Node*, StringPieceHasher> NameNodeMap;
 
+  // 创建用于该Session的计算图。
   ::tensorflow::Status Create(const GraphDef& graph) override;
+  // 给该session的计算图添加操作子。
   ::tensorflow::Status Extend(const GraphDef& graph) override;
+  // 运行计算图。
   ::tensorflow::Status Run(const NamedTensorList& inputs,
                            const std::vector<string>& output_names,
                            const std::vector<string>& target_nodes,
                            std::vector<Tensor>* outputs) override;
 
-  // NOTE: Experimental and subject to change.
+  // NOTE: Experimental and subject to change. 
+  // 跟上面的Run基本一致，但允许输入RunOptions并得到一个非tensor的metadata的输出
   ::tensorflow::Status Run(const ::tensorflow::RunOptions& run_options,
                            const NamedTensorList& inputs,
                            const std::vector<string>& output_names,
@@ -83,11 +89,14 @@ class DirectSession : public Session {
                            RunMetadata* run_metadata) override;
 
   // NOTE: PRunSetup and PRun are added to support partial execution. This
-  // feature is experimental and subject to change.
+  // feature is experimental and subject to change.  
+  // 构建计算图用于部分执行，输入和输出都由input_names和output_names指定。
+  // 返回的handle可以用来执行一系列的部分输入和部分输出。
   ::tensorflow::Status PRunSetup(const std::vector<string>& input_names,
                                  const std::vector<string>& output_names,
                                  const std::vector<string>& target_nodes,
                                  string* handle) override;
+  // 部分执行，由handle进行指定
   ::tensorflow::Status PRun(const string& handle, const NamedTensorList& inputs,
                             const std::vector<string>& output_names,
                             std::vector<Tensor>* outputs) override;
@@ -96,9 +105,12 @@ class DirectSession : public Session {
   // If 'containers' is empty, then Reset clears the default container.
   ::tensorflow::Status Reset(const std::vector<string>& containers);
 
+  // 检索在session中所有可用的device，并放置到response中
   ::tensorflow::Status ListDevices(
       std::vector<DeviceAttributes>* response) override;
+  // 关闭session，并释放相关资源
   ::tensorflow::Status Close() override;
+  // 
   ::tensorflow::Status LocalDeviceManager(const DeviceMgr** output) override {
     *output = device_mgr_.get();
     return ::tensorflow::Status::OK();
@@ -107,13 +119,15 @@ class DirectSession : public Session {
   void ExportCostModels(CostModelManager::CostModelMap* cost_models) {
     cost_model_manager_.ExportCostModels(cost_models);
   }
-
+  // 创建一个句柄去调用由callable_options定义的子图
   ::tensorflow::Status MakeCallable(const CallableOptions& callable_options,
                                     CallableHandle* out_handle) override;
+  // 在给定option和输入tensor下，调用handle对应的子图
   ::tensorflow::Status RunCallable(CallableHandle handle,
                                    const std::vector<Tensor>& feed_tensors,
                                    std::vector<Tensor>* fetch_tensors,
                                    RunMetadata* run_metadata) override;
+  // 释放handle对应的资源
   ::tensorflow::Status ReleaseCallable(CallableHandle handle) override;
 
  private:
@@ -134,13 +148,23 @@ class DirectSession : public Session {
   // a partition of the graph bundled with its dependent library runtime.
   // 'input_keys' are the rendezvous keys for the feeds and 'output_keys'
   // are rendezvous keys for the fetches.
+  // 该结构体是为了给定的输入输出数据集而创建的
   struct ExecutorsAndKeys {
     ExecutorsAndKeys() : step_count(0) {}
 
+    // graph被执行过的次数
     std::atomic_int_fast64_t step_count;
+    // 会被执行的整个计算图
     std::unique_ptr<Graph> graph;
+    // 名字与节点的映射表
     NameNodeMap name_to_node;
+    // items中的每个元素都是与依赖库运行时绑定的部分计算图的执行器
     std::vector<PerPartitionExecutorsAndLib> items;
+    // input_keys是数据输入的集合键，output_keys则是数据取出的集合键
+    //   unordered_map和map类似，不同的是unordered_map不会根据key的大小进行排序，
+    // 即unordered_map内部元素是无序的，而map中的元素是按照二叉搜索树存储，
+    // 所以使用时map的key需要定义operator<。而unordered_map需要定义hash_value
+    // 函数并且重载operator==，但是很多系统内置的数据类型都自带这些。
     std::unordered_map<string, size_t> input_name_to_index;
     std::unordered_map<string, string> input_name_to_rendezvous_key;
     std::unordered_map<string, size_t> output_name_to_index;
@@ -163,8 +187,13 @@ class DirectSession : public Session {
   // 'flib_def' is the function library used.
   // 'proc_flr' is the collection of FunctionLibraryRuntime objects, one per
   // device.
+  // 这个信息可以被折叠合并到ExecutorsAndKeys对象中，但是我们希望保持一个删除顺序，
+  // 在这个顺序中，应该首先销毁OpKernels(由executor拥有)，然后销毁device中的资源，
+  // 最后销毁函数。
   struct FunctionInfo {
+    // 使用的函数库
     std::unique_ptr<FunctionLibraryDefinition> flib_def;
+    // FunctionLibraryRuntime对象的集合，每个设备一份
     std::unique_ptr<ProcessFunctionLibraryRuntime> proc_flr;
   };
 
@@ -172,14 +201,19 @@ class DirectSession : public Session {
   // 'status' is the current status of this partial execution. 'executor_done'
   // is "notified" when all executors are done. 'pending_inputs' are the set
   // of pending feeds and 'pending_outputs' are the set of pending fetches.
+  // 对于每个活动的部分执行，session都维护一个RunState。
   struct RunState {
     mutex mu_;
+    // 这个部分执行的当前状态
     Status status GUARDED_BY(mu_);
     IntraProcessRendezvous* rendez = nullptr;
     std::unique_ptr<CollectiveExecutor::Handle> collective_executor;
     std::unique_ptr<StepStatsCollector> collector;
+    // 将在所有执行器完成时被notified
     Notification executors_done;
+    // 挂起的feed的集合
     std::unordered_map<string, bool> pending_inputs;   // true if fed
+    // 挂起的fetches集合
     std::unordered_map<string, bool> pending_outputs;  // true if fetched
     TensorStore tensor_store;
     ScopedStepContainer step_container;
@@ -213,6 +247,7 @@ class DirectSession : public Session {
 
   // Retrieves an already existing set of executors to run 'inputs' and
   // 'outputs', or creates and caches them for future use.
+  // 检索一个已经存在的执行器集去运行，或者创建一个执行器并加入缓存以供以后的使用
   ::tensorflow::Status GetOrCreateExecutors(
       gtl::ArraySlice<string> inputs, gtl::ArraySlice<string> outputs,
       gtl::ArraySlice<string> target_nodes,
@@ -220,6 +255,7 @@ class DirectSession : public Session {
 
   // Creates a set of executors to run the subgraph defined by
   // `callable_options`.
+  // 创建执行器集去运行由callable_options定义的子图
   ::tensorflow::Status CreateExecutors(
       const CallableOptions& callable_options,
       std::unique_ptr<ExecutorsAndKeys>* out_executors_and_keys,
@@ -229,6 +265,8 @@ class DirectSession : public Session {
   // Creates several graphs given the existing graph_def_ and the
   // input feeds and fetches, given 'devices'. The graphs share a common
   // function library 'flib_def'.
+  // 给定计算图的定义graph_def_、输入/输出和设备，去创建多个计算图。
+  // 这些计算图共享一个公共函数库'flib_def'。
   ::tensorflow::Status CreateGraphs(
       const BuildGraphOptions& options,
       std::unordered_map<string, std::unique_ptr<Graph>>* outputs,
@@ -236,6 +274,7 @@ class DirectSession : public Session {
       RunStateArgs* run_state_args, DataTypeVector* input_types,
       DataTypeVector* output_types);
 
+  // 在Run中调用，开线程池去并行调用执行器
   ::tensorflow::Status RunInternal(int64 step_id, const RunOptions& run_options,
                                    CallFrameInterface* call_frame,
                                    ExecutorsAndKeys* executors_and_keys,
@@ -248,6 +287,7 @@ class DirectSession : public Session {
       const Tensor& resource_tensor, Tensor* retrieved_tensor);
 
   // Feeds more inputs to the executors, triggering further execution.
+  // 批量输入数据到执行器，
   ::tensorflow::Status SendPRunInputs(
       const std::vector<std::pair<string, Tensor>>& inputs,
       const ExecutorsAndKeys* executors_and_keys,
@@ -255,6 +295,7 @@ class DirectSession : public Session {
 
   // Fetches more outputs from the executors. It waits until the output
   // tensors are computed.
+  // 批量接收从执行器得到的输出数据。
   ::tensorflow::Status RecvPRunOutputs(
       const std::vector<string>& output_names,
       const ExecutorsAndKeys* executors_and_keys, RunState* run_state,
@@ -262,6 +303,7 @@ class DirectSession : public Session {
 
   // Check if the specified fetches can be computed from the feeds
   // that we have already provided.
+  // 检查是否可以从已经提供的feeds中计算得到指定的fetches。
   ::tensorflow::Status CheckFetch(
       const std::vector<std::pair<string, Tensor>>& feeds,
       const std::vector<string>& fetches,
@@ -276,12 +318,13 @@ class DirectSession : public Session {
   void WaitForNotification(RunState* run_state, CancellationManager* cm,
                            int64 timeout_in_ms);
 
+  // 检查session是否未关闭
   ::tensorflow::Status CheckNotClosed() {
     mutex_lock l(closed_lock_);
     if (closed_) return errors::Cancelled("Session has been closed.");
     return ::tensorflow::Status::OK();
   }
-
+  // 检查计算图是否有创建
   ::tensorflow::Status CheckGraphCreated(const char* method) {
     mutex_lock l(graph_def_lock_);
     if (!graph_created_) {

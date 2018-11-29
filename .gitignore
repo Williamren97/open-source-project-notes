@@ -18,6 +18,9 @@
 x64/
 x86/
 build/
+windows/
+generated/
+third_party/
 bld/
 [Bb]in/
 [Oo]bj/

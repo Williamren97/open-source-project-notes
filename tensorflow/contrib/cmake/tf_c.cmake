@@ -30,10 +30,9 @@ set(tf_c_srcs
 )
 
 add_library(tf_c OBJECT ${tf_c_srcs})
-#tf_cc_while_loop
 add_dependencies(
   tf_c
   tf_cc_framework
-
+  tf_cc_while_loop
   tf_core_lib
   tf_protos_cc)

@@ -27,14 +27,14 @@ if(WIN32)
       $<TARGET_OBJECTS:tf_cc>
       $<TARGET_OBJECTS:tf_cc_framework>
       $<TARGET_OBJECTS:tf_cc_ops>
-      #$<TARGET_OBJECTS:tf_cc_while_loop>
+      $<TARGET_OBJECTS:tf_cc_while_loop>
       $<TARGET_OBJECTS:tf_core_lib>
       $<TARGET_OBJECTS:tf_core_cpu>
       $<TARGET_OBJECTS:tf_core_framework>
       $<TARGET_OBJECTS:tf_core_ops>
       $<TARGET_OBJECTS:tf_core_direct_session>
-      #$<TARGET_OBJECTS:tf_tools_transform_graph_lib>
-      #$<$<BOOL:${tensorflow_ENABLE_GRPC_SUPPORT}>:$<TARGET_OBJECTS:tf_core_distributed_runtime>>
+      $<TARGET_OBJECTS:tf_tools_transform_graph_lib>
+      $<$<BOOL:${tensorflow_ENABLE_GRPC_SUPPORT}>:$<TARGET_OBJECTS:tf_core_distributed_runtime>>
       $<TARGET_OBJECTS:tf_core_kernels>
       $<$<BOOL:${tensorflow_ENABLE_GPU}>:$<TARGET_OBJECTS:tf_core_kernels_cpu_only>>
       $<$<BOOL:${tensorflow_ENABLE_GPU}>:$<TARGET_OBJECTS:tf_stream_executor>>
@@ -69,14 +69,14 @@ add_library(tensorflow SHARED
     $<TARGET_OBJECTS:tf_cc>
     $<TARGET_OBJECTS:tf_cc_framework>
     $<TARGET_OBJECTS:tf_cc_ops>
-    #$<TARGET_OBJECTS:tf_cc_while_loop>
+    $<TARGET_OBJECTS:tf_cc_while_loop>
     $<TARGET_OBJECTS:tf_core_lib>
     $<TARGET_OBJECTS:tf_core_cpu>
     $<TARGET_OBJECTS:tf_core_framework>
     $<TARGET_OBJECTS:tf_core_ops>
     $<TARGET_OBJECTS:tf_core_direct_session>
-    #$<TARGET_OBJECTS:tf_tools_transform_graph_lib>
-    #$<$<BOOL:${tensorflow_ENABLE_GRPC_SUPPORT}>:$<TARGET_OBJECTS:tf_core_distributed_runtime>>
+    $<TARGET_OBJECTS:tf_tools_transform_graph_lib>
+    $<$<BOOL:${tensorflow_ENABLE_GRPC_SUPPORT}>:$<TARGET_OBJECTS:tf_core_distributed_runtime>>
     $<TARGET_OBJECTS:tf_core_kernels>
     $<$<BOOL:${tensorflow_ENABLE_GPU}>:$<$<BOOL:${BOOL_WIN32}>:$<TARGET_OBJECTS:tf_core_kernels_cpu_only>>>
     $<$<BOOL:${tensorflow_ENABLE_GPU}>:$<TARGET_OBJECTS:tf_stream_executor>>

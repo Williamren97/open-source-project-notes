@@ -80,7 +80,8 @@ class DirectSession : public Session {
                            std::vector<Tensor>* outputs) override;
 
   // NOTE: Experimental and subject to change. 
-  // 跟上面的Run基本一致，但允许输入RunOptions并得到一个非tensor的metadata的输出
+  // 跟上面的Run基本一致，但允许输入RunOptions并得到一个非tensor的metadata的输出。
+  // 而实际上，上面的Run函数调用的就是这个函数。
   ::tensorflow::Status Run(const ::tensorflow::RunOptions& run_options,
                            const NamedTensorList& inputs,
                            const std::vector<string>& output_names,
@@ -279,7 +280,7 @@ class DirectSession : public Session {
                                    CallFrameInterface* call_frame,
                                    ExecutorsAndKeys* executors_and_keys,
                                    RunMetadata* run_metadata);
-
+  // 给该session的计算图添加操作子,在上面Extend函数中，加了锁后调用的就是这个函数。
   ::tensorflow::Status ExtendLocked(const GraphDef& graph)
       EXCLUSIVE_LOCKS_REQUIRED(graph_def_lock_);
 

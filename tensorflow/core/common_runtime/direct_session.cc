@@ -70,16 +70,20 @@ namespace tensorflow {
 
 namespace {
 
+// 用于记录DirectSession::Run()被调用的次数
 auto* direct_session_runs = monitoring::Counter<0>::New(
     "/tensorflow/core/direct_session_runs",
     "The number of times DirectSession::Run() has been called.");
 
+// 根据thread_pool_options创建一个新的线程池，该函数在DirectSession
+// 的构造函数中调用，而线程池会在运算操作子op时使用。
 Status NewThreadPoolFromThreadPoolOptions(
     const SessionOptions& options,
     const ThreadPoolOptionProto& thread_pool_options, int pool_number,
     thread::ThreadPool** pool, bool* owned) {
   int32 num_threads = thread_pool_options.num_threads();
   if (num_threads == 0) {
+    // 从options中获取想开的线程数，或者使用默认的CPU核心数。
     num_threads = NumInterOpThreadsFromSessionOptions(options);
   }
   const string& name = thread_pool_options.global_name();
@@ -118,6 +122,7 @@ Status NewThreadPoolFromThreadPoolOptions(
   return Status::OK();
 }
 
+// 全局线程池，由static定义，全局一份。
 thread::ThreadPool* GlobalThreadPool(const SessionOptions& options) {
   static thread::ThreadPool* const thread_pool =
       NewThreadPoolFromSessionOptions(options);
@@ -138,6 +143,7 @@ string GetRendezvousKey(const string& tensor_name,
 
 }  // namespace
 
+// DirectSession的工厂，封装了创建、重置和撤销注册的函数
 class DirectSessionFactory : public SessionFactory {
  public:
   DirectSessionFactory() {}
@@ -146,11 +152,13 @@ class DirectSessionFactory : public SessionFactory {
     return options.target.empty();
   }
 
+  // 创建一个新的session
   Session* NewSession(const SessionOptions& options) override {
     // Must do this before the CPU allocator is created.
     if (options.config.graph_options().build_cost_model() > 0) {
       EnableCPUAllocatorFullStats(true);
     }
+    // 添加设备，devices为出参
     std::vector<Device*> devices;
     const Status s = DeviceFactory::AddDevices(
         options, "/job:localhost/replica:0/task:0", &devices);
@@ -158,7 +166,7 @@ class DirectSessionFactory : public SessionFactory {
       LOG(ERROR) << s;
       return nullptr;
     }
-
+    // 用获得的devices，创建DirectSession
     DirectSession* session =
         new DirectSession(options, new DeviceMgr(devices), this);
     {
@@ -201,12 +209,14 @@ class DirectSessionFactory : public SessionFactory {
   std::vector<DirectSession*> sessions_ GUARDED_BY(sessions_lock_);
 };
 
+// 外套一层类，作为注册器，在构造时注册DirectSession工厂
 class DirectSessionRegistrar {
  public:
   DirectSessionRegistrar() {
     SessionFactory::Register("DIRECT_SESSION", new DirectSessionFactory());
   }
 };
+// 静态，全局共享一份
 static DirectSessionRegistrar registrar;
 
 std::atomic_int_fast64_t DirectSession::step_id_counter_(1);
@@ -237,10 +247,15 @@ void DirectSession::SchedClosure(thread::ThreadPool* pool,
   // safe given the reasoning above.
   c();
 #else
+  // std::move将左值引用转换为右值引用
+  //   左值是可以放在赋值号左边可以被赋值的值；左值必须要在内存中有实体；
+  //   右值当在赋值号右边取出值赋给其他变量的值；右值可以在内存也可以在CPU寄存器。
+  //   一个对象被用作右值时，使用的是它的内容(值)，被当作左值时，使用的是它的地址。
   pool->Schedule(std::move(c));
 #endif  // __ANDROID__
 }
 
+// DirectSession的构造函数
 DirectSession::DirectSession(const SessionOptions& options,
                              const DeviceMgr* device_mgr,
                              DirectSessionFactory* const factory)
@@ -249,8 +264,10 @@ DirectSession::DirectSession(const SessionOptions& options,
       factory_(factory),
       cancellation_manager_(new CancellationManager()),
       operation_timeout_in_ms_(options_.config.operation_timeout_in_ms()) {
+  // 从option中获取线程池的个数设置
   const int thread_pool_size =
       options_.config.session_inter_op_thread_pool_size();
+  // 当设置多于一个以上的线程池时，每个对应创建一个线程池，并加入thread_pools_中。
   if (thread_pool_size > 0) {
     for (int i = 0; i < thread_pool_size; ++i) {
       thread::ThreadPool* pool = nullptr;
@@ -258,12 +275,15 @@ DirectSession::DirectSession(const SessionOptions& options,
       init_error_.Update(NewThreadPoolFromThreadPoolOptions(
           options_, options_.config.session_inter_op_thread_pool(i), i, &pool,
           &owned));
+      // emplace_back功能等同于push_back,但效率更高
       thread_pools_.emplace_back(pool, owned);
     }
   } else if (options_.config.use_per_session_threads()) {
+    // 根据session的option来创建线程池
     thread_pools_.emplace_back(NewThreadPoolFromSessionOptions(options_),
                                true /* owned */);
   } else {
+    // 创建全局线程池
     thread_pools_.emplace_back(GlobalThreadPool(options), false /* owned */);
   }
   // The default value of sync_on_finish will be flipped soon and this
@@ -288,12 +308,16 @@ DirectSession::DirectSession(const SessionOptions& options,
     LOG(INFO) << "Device mapping:\n" << mapping_str;
   }
   for (auto d : device_mgr_->ListDevices()) {
+    // 添加设备
     devices_.push_back(d);
     device_set_.AddDevice(d);
+    // OpSegment用于保持对 注册到session并在device中运行的OpKernels 的进行跟踪。
+    // 添加session_handle_的映射。
     d->op_segment()->AddHold(session_handle_);
 
     // The first device added is special: it is the 'client device' (a
     // CPU device) from which we feed and fetch Tensors.
+    // 第一个设备为'client device'，为CPU设备，用于输入和输出tensor。
     if (devices_added == 0) {
       device_set_.set_client_device(d);
     }
@@ -301,6 +325,7 @@ DirectSession::DirectSession(const SessionOptions& options,
   }
 }
 
+// DirectSession的析构函数
 DirectSession::~DirectSession() {
   if (!closed_) Close().IgnoreError();
   for (auto& it : partial_runs_) {
@@ -326,6 +351,7 @@ DirectSession::~DirectSession() {
   flib_def_.reset(nullptr);
 }
 
+// 在给定计算图的情况下，初始化基础的执行状态
 Status DirectSession::MaybeInitializeExecutionState(
     const GraphDef& graph, bool* out_already_initialized) {
   // If already initialized, do nothing.
@@ -336,6 +362,7 @@ Status DirectSession::MaybeInitializeExecutionState(
   // Set up the per-session execution state.
   // NOTE(mrry): The function library created here will be used for
   // all subsequent extensions of the graph.
+  // 创建函数库
   flib_def_.reset(
       new FunctionLibraryDefinition(OpRegistry::Global(), graph.library()));
   GraphExecutionStateOptions options;
@@ -350,6 +377,7 @@ Status DirectSession::MaybeInitializeExecutionState(
   // with a wider refactoring; we might revise the direct session so
   // that it copies the graph fewer times.
   GraphDef temp(graph);
+  // 给定计算图和option，得到一个GraphExecutionState。
   TF_RETURN_IF_ERROR(
       GraphExecutionState::MakeForBaseGraph(&temp, options, &execution_state_));
   graph_created_ = true;
@@ -357,6 +385,7 @@ Status DirectSession::MaybeInitializeExecutionState(
   return Status::OK();
 }
 
+// 主要就是调用ExtendLocked，与函数Extend基本相同。
 Status DirectSession::Create(const GraphDef& graph) {
   TF_RETURN_IF_ERROR(init_error_);
   if (graph.node_size() > 0) {
@@ -380,12 +409,18 @@ Status DirectSession::ExtendLocked(const GraphDef& graph) {
   bool already_initialized;
   // If this is the first call, we can initialize the execution state
   // with `graph` and do not need to call `Extend()`.
+  // 在给定计算图的情况下，初始化基础的执行状态
   TF_RETURN_IF_ERROR(
       MaybeInitializeExecutionState(graph, &already_initialized));
+  // 若初始化成功
   if (already_initialized) {
+    // 从graph.library()中添加 函数 和 梯度 到flib_def_这个函数库中，重复的函数
+    // 会被忽略。里面还会记住成功添加了的函数和梯度，这样在出错时可以回滚。
     TF_RETURN_IF_ERROR(flib_def_->AddLibrary(graph.library()));
+    // 创建一个新的GraphExecutionState去表示该计算图graph的连接。
     std::unique_ptr<GraphExecutionState> state;
     TF_RETURN_IF_ERROR(execution_state_->Extend(graph, &state));
+    // 更新
     execution_state_.swap(state);
   }
   return Status::OK();
@@ -650,9 +685,11 @@ Status DirectSession::Run(const RunOptions& run_options,
                           RunMetadata* run_metadata) {
   TF_RETURN_IF_ERROR(CheckNotClosed());
   TF_RETURN_IF_ERROR(CheckGraphCreated("Run()"));
+  // 记录调用Run的次数
   direct_session_runs->GetCell()->IncrementBy(1);
 
   // Extract the inputs names for this run of the session.
+  // 提取输入tensor的名字
   std::vector<string> input_tensor_names;
   input_tensor_names.reserve(inputs.size());
   for (const auto& it : inputs) {
@@ -662,7 +699,7 @@ Status DirectSession::Run(const RunOptions& run_options,
   // Check if we already have an executor for these arguments.
   ExecutorsAndKeys* executors_and_keys;
   RunStateArgs run_state_args(run_options.debug_options());
-
+  // 有executor就拿出，没有则创建一个，主要输出是executors_and_keys。
   TF_RETURN_IF_ERROR(GetOrCreateExecutors(input_tensor_names, output_names,
                                           target_nodes, &executors_and_keys,
                                           &run_state_args));
@@ -1091,6 +1128,8 @@ Status DirectSession::CheckFetch(const NamedTensorList& feeds,
   return Status::OK();
 }
 
+// 创建执行器，需要输入CallableOptions，输出ExecutorsAndKeys和FunctionInfo。
+// 并赋值RunStateArgs的部分内容。
 Status DirectSession::CreateExecutors(
     const CallableOptions& callable_options,
     std::unique_ptr<ExecutorsAndKeys>* out_executors_and_keys,
@@ -1105,6 +1144,8 @@ Status DirectSession::CreateExecutors(
 
   ek->callable_options = callable_options;
 
+  // 创建计算图
+  // ...........................................
   std::unordered_map<string, std::unique_ptr<Graph>> graphs;
   TF_RETURN_IF_ERROR(CreateGraphs(options, &graphs, &func_info->flib_def,
                                   run_state_args, &ek->input_types,
@@ -1251,6 +1292,7 @@ Status DirectSession::CreateExecutors(
   return Status::OK();
 }
 
+// 检索一个已经存在的执行器集去运行，或者创建一个执行器并加入缓存以供以后的使用
 Status DirectSession::GetOrCreateExecutors(
     gtl::ArraySlice<string> inputs, gtl::ArraySlice<string> outputs,
     gtl::ArraySlice<string> target_nodes, ExecutorsAndKeys** executors_and_keys,
@@ -1267,6 +1309,8 @@ Status DirectSession::GetOrCreateExecutors(
   }
 
   // Fast lookup path, no sorting.
+  // strings::StrCat为字符串拼接。
+  // 一个key包含有(输入、输出、目标节点、是否部分执行等)
   const string key = strings::StrCat(
       str_util::Join(inputs, ","), "->", str_util::Join(outputs, ","), "/",
       str_util::Join(target_nodes, ","), "/", run_state_args->is_partial_run,
@@ -1278,6 +1322,7 @@ Status DirectSession::GetOrCreateExecutors(
   }
 
   // See if we already have the executors for this run.
+  // 使用key去检索执行器，找到了就返回
   {
     mutex_lock l(executor_lock_);  // could use reader lock
     auto it = executors_.find(key);
@@ -1293,6 +1338,10 @@ Status DirectSession::GetOrCreateExecutors(
   //
   // We could consider some other signature instead of sorting that
   // preserves the same property to avoid the sort in the future.
+  // 
+  // 若用上面的key未找到执行器，则再用排序好的key再找一次。
+  // 这排序主要是对输入、输出和目标节点进行排序。
+  // （以后有考虑用一些其他的标识代替排序了，以加快效率）
   std::vector<string> inputs_sorted(inputs.begin(), inputs.end());
   std::sort(inputs_sorted.begin(), inputs_sorted.end());
   std::vector<string> outputs_sorted(outputs.begin(), outputs.end());
@@ -1311,6 +1360,7 @@ Status DirectSession::GetOrCreateExecutors(
   }
 
   // See if we already have the executors for this run.
+  // 使用sorted_key去检索执行器，找到了就返回
   {
     mutex_lock l(executor_lock_);
     auto it = executors_.find(sorted_key);
@@ -1325,6 +1375,10 @@ Status DirectSession::GetOrCreateExecutors(
   // Nothing found, so create the executors and store in the cache.
   // The executor_lock_ is intentionally released while executors are
   // being created.
+  // 到了这里，则表示没有找到执行器，则需要创建一个并保存到缓存里，
+  // 以供后面的使用。
+  // 
+  // 由CallableOptions去保存输入、输出、目标节点和调试选项debug_options。
   CallableOptions callable_options;
   for (const string& input : inputs_sorted) {
     callable_options.add_feed(input);
@@ -1339,25 +1393,32 @@ Status DirectSession::GetOrCreateExecutors(
       run_state_args->debug_options;
   std::unique_ptr<ExecutorsAndKeys> ek;
   std::unique_ptr<FunctionInfo> func_info;
+  // 创建执行器.
+  // 输入一个CallableOptions对应, 输出主要包含 ExecutorsAndKeys 和 FunctionInfo，
+  // 并设置run_state_args的一些成员。
   TF_RETURN_IF_ERROR(
       CreateExecutors(callable_options, &ek, &func_info, run_state_args));
 
   // Reacquire the lock, try to insert into the map.
+  // 先获取锁，再将函数信息插入functions_中
   mutex_lock l(executor_lock_);
   functions_.push_back(std::move(func_info));
 
   // Another thread may have created the entry before us, in which case we will
   // reuse the already created one.
+  // 加入到executors_中。
   auto insert_result = executors_.emplace(
       sorted_key, std::shared_ptr<ExecutorsAndKeys>(std::move(ek)));
   // Insert the value under the original key, so the fast path lookup will work
   // if the user uses the same order of inputs, outputs, and targets again.
+  // 基于原始的key再加入一个，这样下次在第一次查找的时候就可以快速找到，而不用再排序。
   executors_.emplace(key, insert_result.first->second);
   *executors_and_keys = insert_result.first->second.get();
 
   return Status::OK();
 }
 
+// 创建计算图
 Status DirectSession::CreateGraphs(
     const BuildGraphOptions& subgraph_options,
     std::unordered_map<string, std::unique_ptr<Graph>>* outputs,
@@ -1369,7 +1430,11 @@ Status DirectSession::CreateGraphs(
 
   std::unique_ptr<GraphExecutionState> temp_exec_state_holder;
   GraphExecutionState* execution_state = nullptr;
+  // 构建计算图，输出client_graph。
   if (options_.config.graph_options().place_pruned_graph()) {
+    // 创建被修剪的计算图
+    // 也正因为是被修剪的计算图，所以需要为每个新的计算图
+    // 创建一个新的GraphExecutionState.
     // Because we are placing pruned graphs, we need to create a
     // new GraphExecutionState for every new unseen graph,
     // and then place it.
@@ -1383,11 +1448,13 @@ Status DirectSession::CreateGraphs(
         &temp_exec_state_holder, &client_graph));
     execution_state = temp_exec_state_holder.get();
   } else {
+    // 创建完整的计算图
     execution_state = execution_state_.get();
     TF_RETURN_IF_ERROR(
         execution_state->BuildGraph(subgraph_options, &client_graph));
   }
 
+  // 创建结果的参数确认
   if (subgraph_options.callable_options.feed_size() !=
       client_graph->feed_types.size()) {
     return errors::Internal(
@@ -1409,6 +1476,7 @@ Status DirectSession::CreateGraphs(
   // Update our current state based on the execution_state's
   // placements.  If there are any mismatches for a node,
   // we should fail, as this should never happen.
+  // 根据execution_state来更新当前的state。主要内容是node_name和placement。
   for (auto placement_pair : current_stateful_placements) {
     const string& node_name = placement_pair.first;
     const string& placement = placement_pair.second;
@@ -1431,7 +1499,10 @@ Status DirectSession::CreateGraphs(
     CopyGraph(*execution_state->full_graph(), run_state_args->graph.get());
   }
 
+  // 根据设备来切分计算图。
   // Partition the graph across devices.
+  // 
+  // 准备操作函数。
   PartitionOptions popts;
   popts.node_to_loc = [](const Node* node) {
     return node->assigned_device_name();
@@ -1447,6 +1518,9 @@ Status DirectSession::CreateGraphs(
   popts.flib_def = &client_graph->graph.flib_def();
   popts.control_flow_added = false;
 
+  // 切分计算图，输出partitions。
+  // partitions.first = partition_name
+  // partitions.second = GraphDef
   std::unordered_map<string, GraphDef> partitions;
   TF_RETURN_IF_ERROR(Partition(popts, &client_graph->graph, &partitions));
 
@@ -1457,6 +1531,7 @@ Status DirectSession::CreateGraphs(
   }
 
   // Check for valid partitions.
+  // 检查每个子计算图是否有效
   for (const auto& partition : partitions) {
     const string local_partition_name =
         DeviceNameUtils::LocalName(partition.first);
@@ -1470,6 +1545,8 @@ Status DirectSession::CreateGraphs(
     }
   }
 
+  // 对每个子图，由计算图的定义去创建计算图
+  // 这里继续分析。。。。。
   for (const auto& partition : partitions) {
     std::unique_ptr<Graph> device_graph(
         new Graph(client_graph->flib_def.get()));
@@ -1529,13 +1606,19 @@ Status DirectSession::CreateGraphs(
   return ::tensorflow::Status::OK();
 }
 
+// 关闭Session
+// 使用cancellation_manager_来调用所有相关的回调函数,这些回调函数即需要
+// 在释放时调用的函数，会在前面预先设置好；而工厂也需要撤销注册该session。
+// 注意factory_的所有权并不归该session所有，它只是在session构造时被传入的。
 ::tensorflow::Status DirectSession::Close() {
+  // 利用cancellation_manager_调用所有相关的回调函数
   cancellation_manager_->StartCancel();
   {
     mutex_lock l(closed_lock_);
     if (closed_) return ::tensorflow::Status::OK();
     closed_ = true;
   }
+  // 撤销注册
   if (factory_ != nullptr) factory_->Deregister(this);
   return ::tensorflow::Status::OK();
 }

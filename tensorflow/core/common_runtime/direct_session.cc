@@ -1552,10 +1552,15 @@ Status DirectSession::CreateGraphs(
         new Graph(client_graph->flib_def.get()));
     GraphConstructorOptions device_opts;
     // There are internal operations (e.g., send/recv) that we now allow.
+    // true时，允许在GraphDef使用内部ops
     device_opts.allow_internal_ops = true;
+    // true时，def应该为所有节点提供完全指定的设备。
+    // 则输出的计算图中的节点相应地设置了设备名称.
     device_opts.expect_device_spec = true;
+    // 用GraphDef构建一个Graph，输出到变量device_graph中。
     TF_RETURN_IF_ERROR(ConvertGraphDefToGraph(device_opts, partition.second,
                                               device_graph.get()));
+    // 打包放到映射表中
     outputs->emplace(partition.first, std::move(device_graph));
   }
 

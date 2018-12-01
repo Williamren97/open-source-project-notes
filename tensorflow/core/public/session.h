@@ -80,6 +80,10 @@ class DeviceMgr;
 ///
 /// Only one thread must call Close(), and Close() must only be called
 /// after all other calls to Run() have returned.
+// 该类中无太多实质性内容，主要为其派生类提供一个公共模板。
+// 该类中的函数大都需要其派生类进行实现。
+// 派生类有为单机执行而设计的DirectSession
+//       和为集群执行而设计的GrpcSession。
 class Session {
  public:
   Session();

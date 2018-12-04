@@ -499,6 +499,12 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
   }
 #endif
 
+  // ExecutorBarrier用于帮助并行运行多个执行器，并等待所有执行器完成计算。
+  // num_executors：执行器的数量。
+  // run_state.rendez：共享的Rendezvous对象，用于state的交互通讯。
+  // 参数三：回调函数StatusCallback，在所有执行器都执行完时，该函数会被调用，
+  //         同时ExecutorBarrier也会被删除
+  // 
   // Start parallel Executors.
   const size_t num_executors = executors_and_keys->items.size();
   ExecutorBarrier* barrier = new ExecutorBarrier(
@@ -591,6 +597,7 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
                                            pool](Executor::Args::Closure c) {
     SchedClosure(pool, std::move(c));
   };
+  // 访问每个执行器
   for (const auto& item : executors_and_keys->items) {
     // TODO(zhengxq): support partial run.
     // TODO(zhengxq): if the device picks its own threadpool, we need to assign
@@ -604,9 +611,11 @@ Status DirectSession::RunInternal(int64 step_id, const RunOptions& run_options,
         SchedClosure(device_thread_pool, std::move(c));
       };
     }
+    // 异步运行执行器
     item.executor->RunAsync(args, barrier->Get());
   }
 
+  // 等待所有执行器执行完毕
   WaitForNotification(&run_state, &step_cancellation_manager,
                       run_options.timeout_in_ms() > 0
                           ? run_options.timeout_in_ms()
@@ -706,6 +715,7 @@ Status DirectSession::Run(const RunOptions& run_options,
 
   // Configure a call frame for the step, which we use to feed and
   // fetch values to and from the executors.
+  // call_frame，这里用于从执行器中输入和输出数据。 
   FunctionCallFrame call_frame(executors_and_keys->input_types,
                                executors_and_keys->output_types);
   gtl::InlinedVector<Tensor, 4> feed_args(inputs.size());
@@ -720,6 +730,7 @@ Status DirectSession::Run(const RunOptions& run_options,
       feed_args[executors_and_keys->input_name_to_index[it.first]] = it.second;
     }
   }
+  // 输送数据
   const Status s = call_frame.SetArgs(feed_args);
   if (errors::IsInternal(s)) {
     return errors::InvalidArgument(s.error_message());
@@ -1145,12 +1156,14 @@ Status DirectSession::CreateExecutors(
   ek->callable_options = callable_options;
 
   // 创建计算图
-  // ...........................................
+  // 输出部分计算图Graph组(由partitions创建)、FunctionLibraryDefinition、
+  // RunStateArgs中的全图以及输入输出类型
   std::unordered_map<string, std::unique_ptr<Graph>> graphs;
   TF_RETURN_IF_ERROR(CreateGraphs(options, &graphs, &func_info->flib_def,
                                   run_state_args, &ek->input_types,
                                   &ek->output_types));
 
+  // 是否是部分执行。。。
   if (run_state_args->is_partial_run) {
     ek->graph = std::move(run_state_args->graph);
     std::unordered_set<StringPiece, StringPieceHasher> names;
@@ -1178,30 +1191,40 @@ Status DirectSession::CreateExecutors(
     graph_def_version =
         execution_state_->original_graph_def().versions().producer();
   }
+  // ProcessFunctionLibraryRuntime
+  // 为DeviceMgr中的每个设备创建FunctionLibraryRuntime对象, 
+  // 需要确保device_mgr、lib_def和parent(如果提供)的声明周期要比该对象长。
   func_info->proc_flr.reset(new ProcessFunctionLibraryRuntime(
       device_mgr_.get(), options_.env, graph_def_version,
       func_info->flib_def.get(), optimizer_opts, thread_pools_[0].first));
 
+  // 构建计算图的优化器
   GraphOptimizer optimizer(optimizer_opts);
   for (auto iter = graphs.begin(); iter != graphs.end(); ++iter) {
     const string& partition_name = iter->first;
     std::unique_ptr<Graph>& partition_graph = iter->second;
 
+    // 根据partition_name来查找设备
     Device* device;
     TF_RETURN_IF_ERROR(device_mgr_->LookupDevice(partition_name, &device));
 
     ek->items.resize(ek->items.size() + 1);
     auto* item = &(ek->items.back());
+    // 获取device_name对应的FunctionLibraryRuntime
     auto lib = func_info->proc_flr->GetFLR(partition_name);
     if (lib == nullptr) {
       return errors::Internal("Could not find device: ", partition_name);
     }
+    // 加入到执行器中
     item->flib = lib;
 
     LocalExecutorParams params;
     params.device = device;
     params.function_library = lib;
+    // OpSegment: 跟踪为在设备上运行的会话注册的操作内核(OpKernels)
+    // 取出该设备的OpSegment。
     auto opseg = device->op_segment();
+    // 创建kernel的函数
     params.create_kernel = [this, lib, opseg](const NodeDef& ndef,
                                               OpKernel** kernel) {
       // We do not share the kernel via the OpSegment if the node is
@@ -1210,6 +1233,7 @@ Status DirectSession::CreateExecutors(
       // using `CallOp`) between subgraphs, because `CallOp::handle_`
       // is tied to a particular subgraph. Even if the function itself
       // is stateful, the `CallOp` that invokes it is not.
+      // 如果节点是无状态的或者是函数，则不通过OpSegment共享内核。
       if (!lib->IsStateful(ndef.op()) ||
           lib->GetFunctionLibraryDefinition()->Find(ndef.op()) != nullptr) {
         return lib->CreateKernel(ndef, kernel);
@@ -1220,9 +1244,12 @@ Status DirectSession::CreateExecutors(
       // Kernels created for subgraph nodes need to be cached.  On
       // cache miss, create_fn() is invoked to create a kernel based
       // on the function library here + global op registry.
+      // 为子图节点创建的内核需要缓存。在缓存失败时，则调用create_fn()来
+      // 创建一个基于函数库+全局op注册表的内核。
       return opseg->FindOrCreate(session_handle_, ndef.name(), kernel,
                                  create_fn);
     };
+    // 删除kernel的函数
     params.delete_kernel = [lib](OpKernel* kernel) {
       // If the node is stateful, opseg owns it. Otherwise, delete it.
       if (kernel && !lib->IsStateful(kernel->type_string())) {
@@ -1230,6 +1257,9 @@ Status DirectSession::CreateExecutors(
       }
     };
 
+    // 将“opts”中指定的optimization passes应用于“graph”。
+    // 可以用一个新的图形对象替换*graph。“device”是“graph”将在其上执行的设备。
+    // (函数、环境、设备、计算图)
     optimizer.Optimize(lib, options_.env, device, &iter->second,
                        /*shape_map=*/nullptr);
 
@@ -1240,7 +1270,7 @@ Status DirectSession::CreateExecutors(
       TF_RETURN_IF_ERROR(DecorateAndPublishGraphForDebug(
           debug_options, partition_graph.get(), params.device));
     }
-
+    // 核对计算图中每条边的输入和输出类型
     TF_RETURN_IF_ERROR(EnsureMemoryTypes(DeviceType(device->device_type()),
                                          device->name(),
                                          partition_graph.get()));
@@ -1256,10 +1286,13 @@ Status DirectSession::CreateExecutors(
 
   // Cache the mapping from input/output names to graph elements to
   // avoid recomputing it every time.
+  // 缓存从输入/输出名称到graph元素的映射，以避免每次都重新计算它。
   if (!run_state_args->is_partial_run) {
     // For regular `Run()`, we use the function calling convention, and so
     // maintain a mapping from input/output names to
     // argument/return-value ordinal index.
+    // 对于常规的Run()，我们使用函数调用约定，
+    // 因此维护从输入/输出名称到参数/返回值序号索引的映射。
     for (int i = 0; i < callable_options.feed().size(); ++i) {
       const string& input = callable_options.feed(i);
       ek->input_name_to_index[input] = i;
@@ -1271,9 +1304,11 @@ Status DirectSession::CreateExecutors(
   } else {
     // For `PRun()`, we use the rendezvous calling convention, and so
     // maintain a mapping from input/output names to rendezvous keys.
-    //
     // We always use the first device as the device name portion of the
     // key, even if we're feeding another graph.
+    //
+    // 对于PRun()，我们使用会合调用约定，因此维护从输入/输出名称到会合键的映射。
+    // 我们总是使用第一个设备作为键的设备名部分，即使我们正在输入的是另一个graph。
     for (int i = 0; i < callable_options.feed().size(); ++i) {
       const string& input = callable_options.feed(i);
       ek->input_name_to_rendezvous_key[input] = GetRendezvousKey(
@@ -1400,7 +1435,7 @@ Status DirectSession::GetOrCreateExecutors(
       CreateExecutors(callable_options, &ek, &func_info, run_state_args));
 
   // Reacquire the lock, try to insert into the map.
-  // 先获取锁，再将函数信息插入functions_中
+  // 先获取锁，再将获取的函数信息添加到functions_的vector中。
   mutex_lock l(executor_lock_);
   functions_.push_back(std::move(func_info));
 
@@ -1546,7 +1581,6 @@ Status DirectSession::CreateGraphs(
   }
 
   // 对每个子图，由计算图的定义去创建计算图
-  // 这里继续分析。。。。。
   for (const auto& partition : partitions) {
     std::unique_ptr<Graph> device_graph(
         new Graph(client_graph->flib_def.get()));
@@ -1568,6 +1602,7 @@ Status DirectSession::CreateGraphs(
   optimization_options.session_options = &options_;
   optimization_options.flib_def = client_graph->flib_def.get();
   optimization_options.partition_graphs = outputs;
+  // 使用相同的GraphOptimizationPassOptions，按阶段顺序运行分组中的所有传递。
   TF_RETURN_IF_ERROR(OptimizationPassRegistry::Global()->RunGrouping(
       OptimizationPassRegistry::POST_PARTITIONING, optimization_options));
 
@@ -1581,8 +1616,10 @@ Status DirectSession::CreateGraphs(
 
     // Give the device an opportunity to rewrite its subgraph.
     Device* d;
+    // 根据给定的名字，获取指向设备的指针
     s = device_mgr_->LookupDevice(partition_name, &d);
     if (!s.ok()) break;
+    // 可选地在执行前修改设备的GraphDef
     s = d->MaybeRewriteGraph(graph);
     if (!s.ok()) {
       break;

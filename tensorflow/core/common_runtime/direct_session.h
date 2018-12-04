@@ -202,7 +202,7 @@ class DirectSession : public Session {
   // 'status' is the current status of this partial execution. 'executor_done'
   // is "notified" when all executors are done. 'pending_inputs' are the set
   // of pending feeds and 'pending_outputs' are the set of pending fetches.
-  // 对于每个活动的部分执行，session都维护一个RunState。
+  // 对于每个活动的partial execution，session会都维护一个RunState。
   struct RunState {
     mutex mu_;
     // 这个部分执行的当前状态

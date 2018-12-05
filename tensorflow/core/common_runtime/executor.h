@@ -43,6 +43,8 @@ class StepStatsCollector;
 //   ... ...
 //
 // Multiple threads can call Executor::Run concurrently.
+// Executor用于执行计算图的运算，运行函数是Run。
+// 多个线程可以同时调用Executor::Run。
 class Executor {
  public:
   virtual ~Executor() {}
@@ -64,7 +66,7 @@ class Executor {
   // RunAsync() uses the given "rendezvous", if not null, as the
   // mechanism to communicate inputs and outputs of the underlying
   // graph computation.
-  //
+  // 
   // RunAsync() calls "stats_collector", if not null, to keep track of
   // stats. This allows us to collect statistics and traces on demand.
   //
@@ -81,10 +83,19 @@ class Executor {
   // RunAsync() dispatches closures to "runner". Typically, "runner"
   // is backed up by a bounded threadpool.
   struct Args {
+    // 运行步骤中跨进程的唯一标识符。在一个步骤在多个设备上运行操作的情况下，
+    // 不同设备上的执行器可以接收到相同的step_id。
+    // step_id用于跟踪给定步骤的资源使用情况。
     int64 step_id = 0;
+    // 如果不为空，则作为底层graph计算中输入和输出的通信机制。
     Rendezvous* rendezvous = nullptr;
+    // 如果不是null，则跟踪统计数据stats。这使我们能够根据需要收集统计数据和跟踪。
     StepStatsCollector* stats_collector = nullptr;
+    // 如果executor用于执行函数，则用于在caller和callee之间传递参数和返回值。
     CallFrameInterface* call_frame = nullptr;
+    // 如果不是nullptr，则该注册了的回调函数应在取消graph计算时调用。
+    // 注意，回调只是解除了任何长时间运行的计算，取消的步骤将通过像
+    // 往常一样返回/调用DoneCallback而终止。
     CancellationManager* cancellation_manager = nullptr;
     SessionState* session_state = nullptr;
     TensorStore* tensor_store = nullptr;
@@ -105,6 +116,9 @@ class Executor {
         NodeOutputsCallback;
   };
   typedef std::function<void(const Status&)> DoneCallback;
+  // 执行计算图的计算：
+  // args为一些输入参数，在done调用前不能释放；
+  // done会在计算完成后调用，由外部实现。
   virtual void RunAsync(const Args& args, DoneCallback done) = 0;
 
   // Synchronous wrapper for RunAsync().
@@ -139,6 +153,7 @@ struct LocalExecutorParams {
   std::function<Status(const NodeDef&, OpKernel**)> create_kernel;
   std::function<void(OpKernel*)> delete_kernel;
 };
+// 创建用于计算graph的executor
 ::tensorflow::Status NewLocalExecutor(const LocalExecutorParams& params,
                                       std::unique_ptr<const Graph> graph,
                                       Executor** executor);
@@ -148,6 +163,8 @@ struct LocalExecutorParams {
 //
 // ExecutorBarrier deletes itself after the function returned by Get()
 // is called.
+//
+// 用于帮助并行运行多个执行器，并等待所有执行器完成计算。
 class ExecutorBarrier {
  public:
   typedef std::function<void(const Status&)> StatusCallback;
@@ -160,6 +177,11 @@ class ExecutorBarrier {
   //
   // 'done' is called after the last executor completes, and
   // ExecutorBarrier is deleted.
+  //
+  // num_executors：执行器的数量。
+  // run_state.rendez：共享的Rendezvous对象，用于state的交互通讯。
+  // done：回调函数StatusCallback，在所有执行器都执行完时，该函数会被调用，
+  //       同时ExecutorBarrier也会被删除
   ExecutorBarrier(size_t num, Rendezvous* r, StatusCallback done)
       : rendez_(r), done_cb_(done), pending_(num) {}
 

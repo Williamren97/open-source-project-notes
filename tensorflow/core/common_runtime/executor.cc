@@ -1554,6 +1554,7 @@ void ExecutorState::RunAsync(Executor::DoneCallback done) {
   }
 
   // Initialize the ready queue.
+  // 将所有节点加入到ready队列中。
   for (const Node* n : impl_->root_nodes_) {
     DCHECK_EQ(n->in_edges().size(), 0);
     ready.push_back(TaggedNode{n, root_frame_, 0, false});
@@ -1565,6 +1566,7 @@ void ExecutorState::RunAsync(Executor::DoneCallback done) {
     root_frame_->iterations[0]->outstanding_ops = ready.size();
     done_cb_ = std::move(done);
     // Schedule to run all the ready ops in thread pool.
+    // 在线程池中运行ready队列中的所有ops
     ScheduleReady(ready, nullptr);
   }
 }
@@ -1615,6 +1617,7 @@ struct ExecutorState::AsyncState {
   }
 };
 
+// 在当前线程中处理一个准备好的节点tagged_node
 void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
   const GraphView& gview = impl_->gview_;
   TaggedNodeSeq ready;
@@ -1720,6 +1723,7 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
       }
 
       // Set up compute params.
+      // 设置计算参数
       OpKernel* op_kernel = item.kernel;
       params.op_kernel = op_kernel;
       params.frame_iter = FrameAndIter(input_frame->frame_id, input_iter);
@@ -1727,6 +1731,7 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
       params.output_attr_array = item.output_attrs();
       params.forward_from_array = item.forward_from();
 
+      // 开始计算：分异步计算和同步计算
       if (item.kernel_is_async) {
         // Asynchronous computes.
         AsyncOpKernel* async = item.kernel->AsAsync();
@@ -1735,6 +1740,7 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
         AsyncState* state =
             new AsyncState(params, tagged_node, &item, first_input, stats);
 
+        // 定义done的函数，会在ComputeAsync中调用。
         auto done = [this, state]() {
           Device* device = impl_->params_.device;
           NodeExecStatsWrapper* stats = state->stats;  // Shorthand
@@ -1763,29 +1769,39 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
           MaybeMarkCompleted(input_frame, input_iter, id);
           TaggedNodeSeq ready;
           if (s.ok()) {
+            // 在处理输出后，将输出传播到它们的dsts。
+            // 从该方法返回后，*outputs的内容处于不确定状态。
             PropagateOutputs(state->tagged_node, state->item, &outputs, &ready);
           }
+          // 清空outputs
           outputs.clear();
           if (s.ok() && impl_->device_record_tensor_accesses_) {
             // Get the list of all tensors accessed during the execution
+            // 获取执行过程中访问的所有张量的列表
             TensorReferenceVector accessed;
             state->ctx.retrieve_accessed_tensors(&accessed);
             nodestats::SetReferencedTensors(stats, accessed);
             // callee takes ownership of the vector
+            // 被调用者拥有向量的所有权
             device->ConsumeListOfAccessedTensors(state->ctx.op_device_context(),
                                                  accessed);
           }
+          // node刚刚结束。获取stats的所有权。如果执行已经完成，返回true。
           const bool completed =
               NodeDone(s, state->item->node, ready, stats, nullptr);
           delete state;
+          // Clean Up
           if (completed) Finish();
         };
         nodestats::SetOpStart(stats);
+        // 异步计算
         device->ComputeAsync(async, &state->ctx, done);
       } else {
         // Synchronous computes.
         OpKernelContext ctx(&params, item.num_outputs);
         nodestats::SetOpStart(stats);
+        // 普通计算/同步计算
+        // 调用op_kernel中的Compute函数，完成该节点的计算。
         device->Compute(CHECK_NOTNULL(op_kernel), &ctx);
         nodestats::SetOpEnd(stats);
         s = ProcessOutputs(item, &ctx, &outputs, stats);
@@ -1798,6 +1814,8 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
       }
     }
 
+    // 如果不是异步启动的，即如果是同步启动的，执行以下操作。
+    // 而如果是异步启动的，在上面的done函数中已经实现了对应的后处理操作。
     if (!launched_asynchronously) {
       if (vlog_) {
         VLOG(2) << "Synchronous kernel done: " << id << " step "
@@ -2194,6 +2212,7 @@ bool ExecutorState::NodeDone(const Status& s, const Node* node,
   return completed;
 }
 
+// 安排将ready中所有的重量级节点，并将ready中的轻量级节点放到inline_ready中
 void ExecutorState::ScheduleReady(const TaggedNodeSeq& ready,
                                   TaggedNodeReadyQueue* inline_ready) {
   if (ready.empty()) return;

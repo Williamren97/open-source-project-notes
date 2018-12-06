@@ -198,21 +198,32 @@ void SetReferencedTensors(NodeExecStatsWrapper* stats,
 class ExecutorImpl;
 class GraphView;
 
+// 计算图的边
 struct EdgeInfo {
-  int dst_id;
-  int output_slot : 31;
+  // 后驱节点id
+  int dst_id; 
+  // 这里的31和1，加起来32位，一起共占4个字节。
+  // 这种定义方式可更高效地利用存储空间，C++11之后才有。
+  // 后驱节点的第output_slot条输入边，对本身来说是输出
+  int output_slot : 31;   
   // true if this is the last info for output_slot in the EdgeInfo list.
+  // 若为true，则这是EdgeInfo列表中output_slot的最后一个信息
   bool is_last : 1;
-  int input_slot;
+  // 前驱节点的第input_slot条输出边，对本身来说是输入。
+  // 这里没有前驱节点id，是因为该结构体本身就包含在源节点中
+  int input_slot; 
 };
 
+// 对节点和核函数等进行打包
 struct NodeItem {
   NodeItem() {}
 
   // A graph node.
+  // 节点，该结构体的主要内容
   const Node* node = nullptr;
 
   // The kernel for this node.
+  // 用于该节点的kernel
   OpKernel* kernel = nullptr;
 
   bool kernel_is_expensive : 1;  // True iff kernel->IsExpensive()
@@ -232,16 +243,20 @@ struct NodeItem {
 
   // ExecutorImpl::tensors_[input_start] is the 1st positional input
   // for this node.
+  // 该节点的输入索引
   int input_start = 0;
 
   // Number of output edges.
+  // 输出边的数量
   size_t num_output_edges;
 
   PendingCounts::Handle pending_id;
 
+  // 输出边的列表
   const EdgeInfo* output_edge_list() const { return output_edge_base(); }
 
   // ith output edge.
+  // 取出第i个输出边
   const EdgeInfo& output_edge(int i) const {
     DCHECK_GE(i, 0);
     DCHECK_LT(i, num_output_edges);
@@ -279,7 +294,11 @@ struct NodeItem {
   //   uint8               output_type[num_outputs];
 
   // Return pointer to variable length section.
+  // 返回可变长度部分的指针
   char* var() const {
+    // const_cast：用来移除变量的const或volatile限定符
+    // reinterpret_cast：用来处理无关类型之间的转换；它会产生一个新的值,
+    //             这个值会有与原始参数（expressoin）有完全相同的比特位。
     return const_cast<char*>(reinterpret_cast<const char*>(this) +
                              sizeof(NodeItem));
   }
@@ -315,11 +334,15 @@ typedef gtl::InlinedVector<DeviceContext*, 4> DeviceContextVec;
 typedef gtl::InlinedVector<AllocatorAttributes, 4> AllocatorAttributeVec;
 
 // Immutable view of a Graph organized for efficient execution.
+// 因为在执行过程中，不需要对图结构进行更改，因此Graph类中很多修改图的接口都没用了，
+// 所以设计了这个为有效执行而组织的不可变的graph视图。
+// 可以检索节点，但无法修改节点。
 class GraphView {
  public:
   GraphView() : space_(nullptr) {}
   ~GraphView();
 
+  // 通过计算图g去初始化下面三个私有成员
   void Initialize(const Graph* g);
   Status SetAllocAttrs(const Graph* g, const Device* device);
   void SetScopedAllocatorAttrs(const std::vector<const Node*>& sa_nodes);
@@ -338,10 +361,13 @@ class GraphView {
   size_t NodeItemBytes(const Node* n);
 
   int32 num_nodes_ = 0;
+  // 节点地址的偏置，node_offsets_[id]保存了节点id在space_中的偏移量
   uint32* node_offsets_ = nullptr;  // array of size "graph_.num_node_ids()"
   // node_offsets_[id] holds the byte offset for node w/ "id" in space_
 
-  char* space_;  // NodeItem objects are allocated here
+  // NodeItem objects are allocated here
+  // 指向存放NodeItem对象的内存的指针
+  char* space_;  
 
   TF_DISALLOW_COPY_AND_ASSIGN(GraphView);
 };

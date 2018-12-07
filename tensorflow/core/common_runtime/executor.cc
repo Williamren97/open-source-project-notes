@@ -380,6 +380,7 @@ class ExecutorImpl : public Executor {
     CHECK(p.delete_kernel != nullptr);
   }
 
+  // 遍历计算图中的所有节点，取出kernel并删除
   ~ExecutorImpl() override {
     for (int i = 0; i < graph_->num_node_ids(); i++) {
       NodeItem* item = gview_.node(i);
@@ -391,24 +392,28 @@ class ExecutorImpl : public Executor {
       delete fiter.second;
     }
   }
-
+  
+  // 主要是计算图视图和帧的一些初始化
   Status Initialize();
 
   // Process all Nodes in the current graph, attempting to infer the
   // memory allocation attributes to be used wherever they may allocate
   // a tensor buffer.
+  // 处理当前图中的所有节点，试图推断出内存分配属性，
+  // 以便在它们可能分配张量缓冲区的任何地方使用。
   Status SetAllocAttrs();
 
+  // 异步运行，主要是调用ExecutorState中的RunAsync函数
   void RunAsync(const Args& args, DoneCallback done) override;
 
  private:
   friend class ExecutorState;
-
+  // 只包含帧的名称
   struct ControlFlowInfo {
     gtl::FlatSet<string> unique_frame_names;
     std::vector<string> frame_names;
   };
-
+  // 包含帧的各种详细信息
   struct FrameInfo {
     FrameInfo()
         : input_count(0),
@@ -417,22 +422,27 @@ class ExecutorImpl : public Executor {
           nodes(nullptr) {}
 
     // The total number of inputs to a frame.
+    // 一帧的输入总数
     int input_count;
 
     // The total number of input tensors of a frame.
     // == sum(nodes[*].num_inputs()) where nodes are the nodes in the frame.
+    // 一帧的输入张量的总数
     int total_inputs;
 
     // Used to determine the next place to allocate space in the
     // pending_counts data structure we'll eventually construct
+    // 用于确定我们最终将构造的pending_counts数据结构中的下一个分配空间的位置
     PendingCounts::Layout pending_counts_layout;
 
     // Each frame has its own PendingCounts only for the nodes in the frame.
+    // 每个帧都有自己的PendingCounts，只对帧中的节点进行计数。
     PendingCounts* pending_counts;  // Owned
 
     // The nodes in a frame. Used only for debugging.
     std::vector<const Node*>* nodes;  // Owned
 
+    // 整个结构体只拥有这两项的所有权
     ~FrameInfo() {
       delete pending_counts;
       delete nodes;
@@ -443,6 +453,8 @@ class ExecutorImpl : public Executor {
                                      ControlFlowInfo* cf_info);
   void InitializePending(const Graph* graph, const ControlFlowInfo& cf_info);
 
+  // 用帧的名字去确认一下用没有对应的帧信息，
+  // 如果没有，则给它新建一个。
   FrameInfo* EnsureFrameInfo(const string& fname) {
     auto slot = &frame_info_[fname];
     if (*slot == nullptr) {
@@ -451,20 +463,26 @@ class ExecutorImpl : public Executor {
     return *slot;
   }
 
-  // Owned.
-  LocalExecutorParams params_;
-  std::unique_ptr<const Graph> graph_;
-  GraphView gview_;
+  // Owned. 
+  // 本地executor的参数，只需参数，因其本身就是Executor的派生类
+  LocalExecutorParams params_; 
+  // 由外面传入的计算图
+  std::unique_ptr<const Graph> graph_;  
+  // 自己拥有的计算图视图，会由上面的计算图进行初始化。
+  GraphView gview_; 
 
   // A cached value of params_
   bool device_record_tensor_accesses_ = false;
 
   // Root nodes (with no in edges) that should form the initial ready queue
+  // 应该形成初始ready队列的根节点(没有边)
+  // （为什么用vector？有多个根节点？）
   std::vector<const Node*> root_nodes_;
 
   // Mapping from frame name to static information about the frame.
   // TODO(yuanbyu): We could cache it along with the graph so to avoid
   // the overhead of constructing it for each executor instance.
+  // 从帧名字与帧信息的映射
   gtl::FlatMap<string, FrameInfo*> frame_info_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(ExecutorImpl);
@@ -475,10 +493,15 @@ class ExecutorImpl : public Executor {
 // connected to n by a single edge, but might be a downstream
 // consumer of n's output by reference.  *attr is updated with any
 // necessary attributes.
+// 根据节点n的使用节点dst推断节点n输出的内存分配属性。
+// 注意，dst可能不是通过一条边直接连接到n，而可能是通过
+// 引用成为n的输出的下游消费者。使用任何必要的属性更新attr。
 Status InferAllocAttr(const Node* n, const Node* dst,
                       const DeviceNameUtils::ParsedName& local_dev_name,
                       AllocatorAttributes* attr);
 
+// 重点析构NodeItem和释放space_。
+// 查看node(i)可知，NodeItem的存储位置是space_加偏置项。
 GraphView::~GraphView() {
   static_assert(std::is_trivially_destructible<AllocatorAttributes>::value,
                 "Update code if AllocatorAttributes gains a destructor");
@@ -682,15 +705,19 @@ void GetMaxPendingCounts(const Node* n, size_t* max_pending,
   *max_dead_count = num_in_edges;
 }
 
+// 主要是计算图视图和帧的一些初始化
 Status ExecutorImpl::Initialize() {
+  // 通过计算图去初始化计算图视图
   gview_.Initialize(graph_.get());
 
-  // Build the information about frames in this subgraph.
+  // ControlFlowInfo只包含帧的名称，只不过提供了set和vector两种方式。
   ControlFlowInfo cf_info;
+  // Build the information about frames in this subgraph.
   TF_RETURN_IF_ERROR(BuildControlFlowInfo(graph_.get(), &cf_info));
 
   // Cache this value so we make this virtual function call once, rather
   // that O(# steps * # nodes per step) times.
+  // 缓存这个值，这样我们只调用一次虚函数，而不是多(# steps * # node / step)次。
   device_record_tensor_accesses_ =
       params_.device->RequiresRecordingAccessedTensors();
 
@@ -700,6 +727,7 @@ Status ExecutorImpl::Initialize() {
 
   // Preprocess every node in the graph to create an instance of op
   // kernel for each node.
+  // 为计算图中的每个节点创建一个op kernel的实例，并初始化一些节点参数
   for (const Node* n : graph_->nodes()) {
     const int id = n->id();
     const string& frame_name = cf_info.frame_names[id];
@@ -833,6 +861,7 @@ Status GraphView::SetAllocAttrs(const Graph* g, const Device* device) {
 
     // Examine the out edges of each node looking for special use
     // cases that may affect memory allocation attributes.
+    // 检查每个节点的外边缘，寻找可能影响内存分配属性的特殊用例。
     for (const auto& e : n->out_edges()) {
       if (!e->IsControlEdge()) {
         AllocatorAttributes attr;

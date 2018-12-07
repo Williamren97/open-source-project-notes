@@ -150,7 +150,9 @@ struct LocalExecutorParams {
   // create_kernel returns an instance of op kernel based on NodeDef.
   // delete_kernel is called for every kernel used by the executor
   // when the executor is deleted.
+  // 基于NodeDef返回一个op kernel的实例
   std::function<Status(const NodeDef&, OpKernel**)> create_kernel;
+  // 在删除executor时，将为executor使用的每个内核调用delete_kernel。
   std::function<void(OpKernel*)> delete_kernel;
 };
 // 创建用于计算graph的executor
@@ -178,8 +180,8 @@ class ExecutorBarrier {
   // 'done' is called after the last executor completes, and
   // ExecutorBarrier is deleted.
   //
-  // num_executors：执行器的数量。
-  // run_state.rendez：共享的Rendezvous对象，用于state的交互通讯。
+  // num：执行器的数量。
+  // r：共享的Rendezvous对象，用于state的交互通讯。
   // done：回调函数StatusCallback，在所有执行器都执行完时，该函数会被调用，
   //       同时ExecutorBarrier也会被删除
   ExecutorBarrier(size_t num, Rendezvous* r, StatusCallback done)
@@ -189,7 +191,11 @@ class ExecutorBarrier {
 
   // Returns a closure that Executors must call when they are done
   // computing, passing the status of their execution as an argument.
+  // 返回一个执行器在执行完毕之后必须调用的函数闭包，
+  // 执行器会使用它们结束时的状态作为执行闭包的参数
   StatusCallback Get() {
+    // std::bind预先参数this绑定到已有的函数WhenDone，
+    // 产生一个新的可调用的实体std::function
     return std::bind(&ExecutorBarrier::WhenDone, this, std::placeholders::_1);
   }
 
@@ -198,6 +204,7 @@ class ExecutorBarrier {
   StatusCallback done_cb_ = nullptr;
 
   mutable mutex mu_;
+  // 还剩几个执行器未执行完
   int pending_ GUARDED_BY(mu_) = 0;
   Status status_ GUARDED_BY(mu_);
 
@@ -248,6 +255,8 @@ class ExecutorBarrier {
 // Creates a kernel based on "ndef" on device "device". The kernel can
 // access the functions in the "flib". The caller takes ownership of
 // returned "*kernel".
+// 在设备“device”上创建基于“ndef”的内核。
+// 内核可以访问“flib”中的函数。调用方获得返回的“*kernel”的所有权。
 Status CreateNonCachedKernel(Device* device, FunctionLibraryRuntime* flib,
                              const NodeDef& ndef, int graph_def_version,
                              OpKernel** kernel);

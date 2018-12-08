@@ -93,6 +93,15 @@ limitations under the License.
 
 // A macro to disallow the copy constructor and operator= functions
 // This is usually placed in the private: declarations for a class.
+//   禁用拷贝构造和运算符=的重载。
+//
+// Google代码规范中约定：
+//     仅在代码中需要拷贝一个类对象的时候使用拷贝构造函数；
+//   不需要拷贝时应使用DISALLOW_COPY_AND_ASSIGN。
+// 原因：
+//     C++中对象的隐式拷贝是导致很多性能问题和bugs的根源。
+//   拷贝构造函数降低了代码可读性，相比按引用传递，跟踪按值传递的对象更加困难，
+//   对象修改的地方变得难以捉摸。
 #define TF_DISALLOW_COPY_AND_ASSIGN(TypeName) \
   TypeName(const TypeName&) = delete;         \
   void operator=(const TypeName&) = delete

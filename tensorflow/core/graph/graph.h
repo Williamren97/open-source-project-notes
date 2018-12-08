@@ -66,6 +66,7 @@ class NeighborIter;    // Declared below
 class NodeIter;        // Declared below
 class NodeProperties;  // Defined in .cc
 
+// 节点
 class Node {
  public:
   string DebugString() const;
@@ -84,6 +85,8 @@ class Node {
   //   the actual assigned device, see assigned_device_name() below;
   // * def().attr() is authoritative.
   // TODO(irving): Replace with NodeInfo.
+  // NodeDef和OpDef均继承于protobuf::Message
+  // 提供用户提供的节点定义，但由于位置、优化等原因，该节点的细节可能已经更改。
   const NodeDef& def() const;
   const OpDef& op_def() const;
 
@@ -98,10 +101,12 @@ class Node {
 
   // The device requested by the user.  For the actual assigned device,
   // use assigned_device_name() below.
+  // 用户请求的设备。对于实际分配的设备，请使用下面的assigned_device_name()。
   const string& requested_device() const;
 
   // This changes the user requested device but not necessarily the device that
   // on which the operation will run.
+  // 这将更改用户请求的设备，但不一定更改真正运行op的设备。
   void set_requested_device(const string& device);
 
   // This gives the device the runtime has assigned this node to.  If
@@ -119,9 +124,11 @@ class Node {
   void set_assigned_device_name_index(int index);
 
   // Read only access to attributes
+  // 获取属性信息，输出的类对象是根据node的定义def()来构建的
   AttrSlice attrs() const;
 
   // Inputs requested by the NodeDef.  For the actual inputs, use in_edges.
+  // 由NodeDef请求的输入。对于实际输入，使用in_edge
   const protobuf::RepeatedPtrField<string>& requested_inputs() const;
 
   // Get the neighboring nodes via edges either in or out of this node.  This

@@ -34,6 +34,7 @@ namespace tensorflow {
 
 const int Graph::kControlSlot = -1;
 
+// 节点属性
 class NodeProperties {
  public:
   NodeProperties(const OpDef* op_def, const NodeDef& node_def,
@@ -177,6 +178,9 @@ gtl::iterator_range<NeighborIter> Node::in_nodes() const {
 
 void Node::MaybeCopyOnWrite() {
   // NodeProperties may be shared between Nodes. Make a copy if so.
+  // 节点属性可能是在节点之间共享。如果是，则复制一份。
+  // unique(): 如果没有其他shared_ptr对象拥有该资源，则返回true
+  // std::make_shared: 返回一个指定类型的 std::shared_ptr
   if (!props_.unique()) {
     props_ = std::make_shared<NodeProperties>(*props_);
   }

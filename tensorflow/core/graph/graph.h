@@ -133,6 +133,7 @@ class Node {
 
   // Get the neighboring nodes via edges either in or out of this node.  This
   // includes control edges.
+  // 通过该节点的输入或输出边去获取其相邻的节点。这包括控制边。
   gtl::iterator_range<NeighborIter> in_nodes() const;
   gtl::iterator_range<NeighborIter> out_nodes() const;
   const EdgeSet& in_edges() const { return in_edges_; }
@@ -145,6 +146,7 @@ class Node {
   bool IsOp() const { return id() > 1; }
 
   // Node class helpers
+  // 判断节点类型
   bool IsSwitch() const { return class_ == NC_SWITCH; }
   bool IsMerge() const { return class_ == NC_MERGE; }
   bool IsEnter() const { return class_ == NC_ENTER; }
@@ -222,6 +224,8 @@ class Node {
   // A set of mutually exclusive classes for different kinds of nodes,
   // class_ is initialized in the Node::Initialize routine based on the
   // node's type_string().
+  // 对于不同类型的节点，class_是一组互斥的类，
+  // 在Node::Initialize例程中根据节点的type_string()初始化class_。
   enum NodeClass {
     NC_UNINITIALIZED,
     NC_SWITCH,

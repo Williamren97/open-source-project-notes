@@ -12,6 +12,7 @@ namespace caffe {
  * @brief Optimizes the parameters of a Net using
  *        stochastic gradient descent (SGD) with momentum.
  */
+// 继承于Solver的随机梯度下降解决方案。
 template <typename Dtype>
 class SGDSolver : public Solver<Dtype> {
  public:

@@ -62,6 +62,7 @@ Dtype SGDSolver<Dtype>::GetLearningRate() {
   return rate;
 }
 
+// 初始化solver的参数记录
 template <typename Dtype>
 void SGDSolver<Dtype>::PreSolve() {
   // Initialize the history

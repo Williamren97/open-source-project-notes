@@ -184,17 +184,22 @@ class Node {
   void ClearAttr(const string& name);
 
   // Returns into '*e' the edge connecting to the 'idx' input of this Node.
+  // 返回该节点的第idx个输入边e。
   Status input_edge(int idx, const Edge** e) const;
 
   // Returns into '*edges' the input data edges of this Node, indexed by input
   // number. Does not return control edges.
+  // 返回该节点的数据输入边edges。不返回控制边(control edges)
   Status input_edges(std::vector<const Edge*>* edges) const;
 
   // Returns into '*n' the node that has an output connected to the
   // 'idx' input of this Node.
+  // 返回该节点的第idx个输入节点。
   Status input_node(int idx, const Node** n) const;
   Status input_node(int idx, Node** n) const;
 
+  // WhileContext：关于一个while loop的信息，每个用户定义的
+  //               while loop都会有其相关的WhileContext.
   WhileContext* while_ctx() const { return while_ctx_; }
   void set_while_ctx(WhileContext* while_ctx) {
     DCHECK(IsExit());
@@ -217,8 +222,11 @@ class Node {
   // Make a copy of the Node's props_ if props_ is shared with
   // other nodes. This must be called before mutating properties,
   // e.g. in AddAttr.
+  // 如果props_是与其他节点共享的，则对该节点的props_做个备份。
   void MaybeCopyOnWrite();
 
+  // 返回该节点属性中索引为name的AttrValue。
+  // 该函数用于上面定义的AddAttr。
   AttrValue* AddAttrHelper(const string& name);
 
   // A set of mutually exclusive classes for different kinds of nodes,
@@ -251,8 +259,10 @@ class Node {
     NC_OTHER  // Not a special kind of node
   };
 
+  // 用字符串与NodeClass中的枚举进行对应，如Switch对应NC_SWITCH。
   static const std::unordered_map<string, NodeClass>& kNodeClassTable;
 
+  // 以字符串根据上面的kNodeClassTable找到对应的NodeClass。
   static NodeClass GetNodeClassForOp(const string& ts);
 
   int id_;       // -1 until Initialize() is called
@@ -269,6 +279,7 @@ class Node {
 
   // Index within Graph::device_names_ of the name of device assigned
   // to perform this computation.
+  // 在Graph::device_names_中指定执行此计算的设备名称的索引。
   int assigned_device_name_index_;
 
   // A back-pointer to the Graph that owns this node.  Currently, this exists
@@ -276,6 +287,10 @@ class Node {
   // callers of Node::[set_]assigned_device_name() are modified to use the
   // equivalent methods defined directly on Graph, then we can remove this
   // field and reclaim that memory.
+  // 一个反向指针，指向拥有该节点的图形。
+  // 目前，它只允许Node::[set_]assigned_device_name()工作。
+  // 但如果修改了Node::[set_]assigned_device_name()的所有调用者，
+  // 以使用直接在图上定义的等效方法，那么我们可以删除该字段并回收该内存。
   Graph* graph_;
 
   // Set if this is an exit node of a while loop with an associated
@@ -283,14 +298,20 @@ class Node {
   // they're the first nodes of a loop encountered while creating the gradient
   // graph. Exit nodes that are part of while loop gradient graphs will not have
   // this set.)
+  // 如果这是一个while loop的出口节点，则设置它与关联的WhileContext，否则为NULL。
+  // (这只用于出口节点，因为它们是创建梯度图时的循环中第一个节点。
+  // 而while loop梯度图的退出节点不会有此集合)
   WhileContext* while_ctx_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(Node);
 };
 
 // Represents an input of a node, i.e., the `index`-th input to `node`.
+// 表示一个节点的一个输入
 struct InputTensor {
+  // 服务于该节点
   const Node* node;
+  // 为该节点的第index个输入
   int index;
 
   InputTensor(const Node* n, int i) : node(n), index(i) {}
@@ -310,8 +331,12 @@ struct InputTensor {
 // Represents an output of a node, i.e., the `index`-th output of `node`. Note
 // that a single `OutputTensor` can correspond to multiple `Edge`s if the output
 // is consumed by multiple destination nodes.
+// 一个节点的一个输出。
+// 注意如果该输出被多个目标节点使用，那么一个OutputTensor可以对应多个Edge。
 struct OutputTensor {
+  // 服务于该节点
   const Node* node;
+  // 为该节点的第index个输出
   int index;
 
   OutputTensor(const Node* n, int i) : node(n), index(i) {}
@@ -328,8 +353,10 @@ struct OutputTensor {
   };
 };
 
+// 计算图中的边
 class Edge {
  public:
+  // 返回该Edge连接的输入输出节点
   Node* src() const { return src_; }
   Node* dst() const { return dst_; }
   int id() const { return id_; }
@@ -337,15 +364,18 @@ class Edge {
   // Return the index of the source output that produces the data
   // carried by this edge.  The special value kControlSlot is used
   // for control dependencies.
+  // 返回产生由这条边携带的数据的源输出的索引。特殊值kControlSlot用于控制依赖项。
   int src_output() const { return src_output_; }
 
   // Return the index of the destination input that consumes the data
   // carried by this edge.  The special value kControlSlot is used
   // for control dependencies.
+  // 返回使用此边携带的数据的目标输入的索引。
   int dst_input() const { return dst_input_; }
 
   // Return true iff this is an edge that indicates a control-flow
   // (as opposed to a data-flow) dependency.
+  // 如果这是一条表示控件流(而不是数据流)依赖关系的边，则返回true。
   bool IsControlEdge() const;
 
   string DebugString() const;
@@ -364,11 +394,14 @@ class Edge {
 
 // Allows for iteration of the edges of a Graph, by iterating the underlying
 // Graph.edges_ vector while skipping over null entries.
+// 允许迭代graph的edges，通过迭代底层Graph.edges_向量并同时跳过空条目。
 class GraphEdgesIterable {
  private:
   const std::vector<Edge*>& edges_;
 
  public:
+  // 显式构造：https://blog.csdn.net/starlee/article/details/1331268
+  // 防止隐式构造造成错误
   explicit GraphEdgesIterable(const std::vector<Edge*>& edges)
       : edges_(edges) {}
 
@@ -423,6 +456,9 @@ class GraphEdgesIterable {
 };
 
 // Thread compatible but not thread safe.
+// 线程兼容但不是线程安全的。
+// 线程兼容类不是线程安全的，但是可以通过正确使用同步而在并发环境中安全地使用.
+// https://baike.baidu.com/item/%E7%BA%BF%E7%A8%8B%E5%AE%89%E5%85%A8/9747724
 class Graph {
  public:
   // Constructs a graph with a single SOURCE (always id kSourceId) and a
@@ -430,6 +466,10 @@ class Graph {
   //
   // The graph can hold ops found in registry. `registry`s lifetime must be at
   // least that of the constructed graph's.
+  //
+  // 以一个SOURCE、一个SINK节点和一条SOURCE到SINK的边，去构建一个计算图。
+  // 该计算图可以保存registry中找到的ops。
+  // registry的生命周期必须长于构造的计算图的生命周期。
   explicit Graph(const OpRegistryInterface* registry);
 
   // Constructs a graph with a single SOURCE (always id kSourceId) and a
@@ -440,6 +480,10 @@ class Graph {
   // `flib_def` so its lifetime may be shorter than that of the graph's. The
   // OpRegistryInterface backing `flib_def` must still have the lifetime of the
   // graph though.
+  //
+  // 该计算图可以保存在flib_def中找到的ops。与使用OpRegistryInterface的构造函数不同，
+  // 这个构造函数复制了flib_def中的函数定义，因此它的生命周期可能比计算图的生命周期短。
+  // 但是，支持“flib_def”的OpRegistryInterface必须仍然具有计算图的生命周期。
   explicit Graph(const FunctionLibraryDefinition& flib_def);
 
   ~Graph();
@@ -447,26 +491,35 @@ class Graph {
   static const int kControlSlot;
 
   // The GraphDef version range of this graph (see graph.proto).
+  // 该计算图的GraphDef的版本范围
   const VersionDef& versions() const;
   void set_versions(const VersionDef& versions);
 
   // Adds a new node to this graph, and returns it. Infers the Op and
   // input/output types for the node. *this owns the returned instance.
   // Returns nullptr and sets *status on error.
+  // 向计算图中添加一个新节点，并返回它。推断节点的Op和输入/输出类型。
+  // *this拥有返回的实例。若返回nullptr，则在*status上设置错误信息。
   Node* AddNode(const NodeDef& node_def, Status* status);
 
   // Copies *node, which may belong to another graph, to a new node,
   // which is returned.  Does not copy any edges.  *this owns the
   // returned instance.
+  // 拷贝节点。该节点可能属于其他计算图，拷贝生成一个新的节点返回。
+  // 不拷贝任何edges。*this拥有返回的实例。
   Node* CopyNode(const Node* node);
 
   // Removes a node from this graph, including all edges from or to it.
   // *node should not be accessed after calling this function.
   // REQUIRES: node->IsOp()
+  // 从计算图中移除一个节点，包括它的所有输入输出edges。
+  // 在调用该节点后，不应再访问*node。
   void RemoveNode(Node* node);
 
   // Adds an edge that connects the xth output of `source` to the yth input of
   // `dest` and returns it. Does not update dest's NodeDef.
+  // 添加一条边，将节点source的第x个输出连接到节点dest的第y个输入，并返回该边。
+  // 不更新dest的节点定义。
   const Edge* AddEdge(Node* source, int x, Node* dest, int y);
 
   // Adds a control edge (no data flows along this edge) that connects `source`

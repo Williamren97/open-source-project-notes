@@ -38,6 +38,7 @@ namespace tensorflow {
 // Users that want to look up an OpDef by type name should take an
 // OpRegistryInterface.  Functions accepting a
 // (const) OpRegistryInterface* may call LookUp() from multiple threads.
+// 用于按类型名称查找OpDef。
 class OpRegistryInterface {
  public:
   virtual ~OpRegistryInterface();
@@ -84,6 +85,7 @@ class OpRegistry : public OpRegistryInterface {
   string DebugString(bool include_internal) const;
 
   // A singleton available at startup.
+  // 单例模式，全局公用的注册表。
   static OpRegistry* Global();
 
   // Get all registered ops.
@@ -161,6 +163,7 @@ class OpRegistry : public OpRegistryInterface {
 // Note that shape inference functions are not passed in to OpListOpRegistry, so
 // it will return an unusable shape inference function for every op it supports;
 // therefore, it should only be used in contexts where this is okay.
+// 一个允许OpList用作OpRegistryInterface的适配器。
 class OpListOpRegistry : public OpRegistryInterface {
  public:
   // Does not take ownership of op_list, *op_list must outlive *this.

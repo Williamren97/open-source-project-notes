@@ -777,29 +777,39 @@ class Graph {
   // The InternDeviceName() method handles adding a new entry into the table,
   // or locating the index of an existing entry.
   //
-  ////////// InternDeviceName()方法处理向表中添加新条目，或定位现有条目的索引。
+  // InternDeviceName()用于向表中添加新条目，或定位现有条目的索引。
   //
   // The fact that Node::assigned_device_name() is implemented using an
   // interning table is intentionally public.  This allows algorithms that
   // frequently access this field to do so efficiently, especially for the case
   // where the assigned_device_name of one Node is copied directly from that
   // of another Node.
-
+  //
+  // Node::assigned_device_name()是使用外部表实现的，这是有意公开的。
+  // 这使得频繁访问该字段的算法能够有效地做到这一点，特别是在一个节点
+  // 的assigned_device_name直接从另一个节点的assigned_device_name复制的情况下。
+  //
   // A table of the unique assigned device names.  Indices do NOT correspond
   // to node IDs.  Index 0 is always the empty string.
+  // 唯一指定设备名称的表。索引与节点id不相对应。索引0总是空字符串。
   std::vector<string> device_names_;
 
   // Maps unique device names to indices within device_names_[i].
+  // 将唯一的设备名称映射到device_names_[i]中的索引。
   std::unordered_map<string, int> device_names_map_;
 
   // All the while contexts owned by this graph, keyed by frame name,
   // corresponding to all the while loops contained in this graph (including
   // nested loops). The stored contexts are usually accessed via
   // AddWhileContext() or Node::while_ctx(), but this manages the lifetime.
+  // 所有while上下文归该计算图所拥，以帧的名字作为关键字，
+  // 对应于此图所包含的所有while循环(包括嵌套循环)。
+  // 存储的上下文通常通过AddWhileContext()或Node::while_ctx()访问。
   std::map<string, WhileContext> while_ctxs_;
 
   // Searches through edges_ for the Edge whose destination node and index
   // matches dst. An edge with destination `dst` must exist in the graph.
+  // 通过edges_搜索其目标节点和索引与dst匹配的边。该边的目标dst必须存在于该计算图中。
   const Edge* FindEdge(const Node* dst, int index);
 
   TF_DISALLOW_COPY_AND_ASSIGN(Graph);

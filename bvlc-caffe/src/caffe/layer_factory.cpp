@@ -32,6 +32,7 @@
 #endif
 
 namespace caffe {
+// 这里主要用于切换部分算法层的本地实现和CUDNN实现。
 
 // Get convolution layer according to engine.
 template <typename Dtype>

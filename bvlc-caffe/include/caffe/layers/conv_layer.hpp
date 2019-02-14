@@ -19,6 +19,9 @@ namespace caffe {
  *   high-throughput and generality of input and filter dimensions but comes at
  *   the cost of memory for matrices. This makes use of efficiency in BLAS.
  *
+ *   Caffe用矩阵乘法来实现卷积。这达到了高吞吐量，以及输入和滤波器维度的通用性，
+ *   但代价是矩阵的内存。但这可以充分利用了BLAS达到效率。
+ * 
  *   The input is "im2col" transformed to a channel K' x H x W data matrix
  *   for multiplication with the N x K' x H x W filter matrix to yield a
  *   N' x H x W output matrix that is then "col2im" restored. K' is the
@@ -26,6 +29,13 @@ namespace caffe {
  *   inputs so that the im2col matrix has a column for each input region to
  *   be filtered. col2im restores the output spatial structure by rolling up
  *   the output channel N' columns of the output matrix.
+ *
+ *   输入是由"im2col"转换的通道为K'x H x W的数据矩阵，与N x K'x H x W的滤波(权重)矩阵相乘，
+ *   得到N' x H x W输出矩阵，然后可用"col2im"恢复。
+ *   K'为原始输入的输入通道*核高*核宽的维度，使得im2col矩阵对于每个要过滤的输入
+ *   区域都会有一列。而"col2im"则通过卷起输出矩阵的输出通道N'列来恢复输出空间结构。
+ *
+ *   实现分析: https://github.com/cjmcv/dlex-cnn/blob/master/core/include/operator/convolution_op.h
  */
 template <typename Dtype>
 class ConvolutionLayer : public BaseConvolutionLayer<Dtype> {
